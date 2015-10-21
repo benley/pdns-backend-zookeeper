@@ -141,7 +141,6 @@ class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
         while True:
             try:
                 zkpath, shard = zkpaths.next()
-                log.info('zkpath: %s', zkpath)
                 sset = list(serverset.ServerSet(self.zkclient, zkpath))
                 if not sset:
                     continue
