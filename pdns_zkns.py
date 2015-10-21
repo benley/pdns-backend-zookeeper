@@ -138,23 +138,19 @@ class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
 
     def resolve_hostname(self, hostname):
         """Resolve a hostname to a list of serverset instances."""
-        zkpaths = construct_paths(hostname, self.domain)
-        while True:
-            try:
-                zkpath, shard = zkpaths.next()
-                sset = list(serverset.ServerSet(self.zkclient, zkpath))
-                if not sset:
-                    continue
-                elif shard is None:
-                    return sset
-                else:
-                    for ss_instance in sset:
-                        if ss_instance.shard == shard:
-                            return [ss_instance]
-                    continue
-            except StopIteration:
-                log.info('nothing found')
-                return []
+        zkpaths = construct_paths(hostname, self.domain) or []
+        for (zkpath, shard) in zkpaths:
+            sset = list(serverset.ServerSet(self.zkclient, zkpath))
+            if not sset:
+                continue
+            elif shard is None:
+                return sset
+            else:
+                for ss_instance in sset:
+                    if ss_instance.shard == shard:
+                        return [ss_instance]
+                continue
+        return []  # Nothing found :(
 
 
 def construct_paths(hostname, basedomain=None):
