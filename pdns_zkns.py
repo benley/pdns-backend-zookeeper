@@ -3,6 +3,7 @@
 
 Not yet implemented:
     - NS records
+    - SRV records (with port numbers, etc)
     - Instrumentation (Prometheus metrics)
     - Some kind of status page
     - Correct handling of ANY queries
