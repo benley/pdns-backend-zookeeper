@@ -3,10 +3,11 @@
 
 Not yet implemented:
     - NS records
-    - SRV records (with port numbers, etc)
     - Instrumentation (Prometheus metrics)
     - Some kind of status page
-    - Correct handling of ANY queries
+    - Correct handling of ANY queries(?)
+    - Testing
+    - Documentation
 """
 
 import time
@@ -53,9 +54,9 @@ flags.DEFINE_integer('soa_nxdomain_ttl', 60,
 class SOAData(object):
     """DNS SOA data representation."""
 
-    def __init__(self, ttl, ns, email, refresh, retry, expire, nxdomain_ttl):
+    def __init__(self, ttl, ns1, email, refresh, retry, expire, nxdomain_ttl):
         self.ttl = int(ttl)
-        self.ns = str(ns)
+        self.ns1 = str(ns1)
         self.email = str(email)
         self.refresh = int(refresh)
         self.retry = int(retry)
@@ -74,7 +75,7 @@ def dnsresponse(data):
     Remote api docs:
         https://doc.powerdns.com/md/authoritative/backend-remote/
     """
-    resp = {'result': data}
+    resp = {'result': list(data)}
     log.debug('DNS response: %s', resp)
     return resp
 
@@ -91,37 +92,17 @@ class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
         DiagnosticsEndpoints.__init__(self)
         http.HttpServer.__init__(self)
 
-    def a_response(self, qname):
-        """Generate a pdns A query response."""
-        instances = self.resolve_hostname(qname)
-        return dnsresponse([
-            {'qtype': 'A',
-             'qname': qname,
-             'ttl': self.ttl,
-             'content': x.service_endpoint.host} for x in instances
-            ])
-
-    def soa_response(self, qname):
-        """Generate a pdns SOA query response."""
-        if not qname.lower().strip('.').endswith(self.domain):
-            return dnsresponse(False)
-
-        return dnsresponse([
-            {'qtype': 'SOA',
-             'qname': self.domain,
-             'ttl': self.soa_data.ttl,
-             'content': str(self.soa_data)}
-            ])
-
     @http.route('/dnsapi/lookup/<qname>/<qtype>', method='GET')
     def dnsapi_lookup(self, qname, qtype):
         """pdns lookup api"""
         log.debug('QUERY: %s %s', qname, qtype)
         # TODO: better ANY handling (what's even correct here?)
         if qtype in ['A', 'ANY']:
-            return self.a_response(qname)
+            return dnsresponse(self.a_lookup(qname))
         elif qtype == 'SOA':
-            return self.soa_response(qname)
+            return dnsresponse(self.soa_lookup(qname))
+        elif qtype == 'SRV':
+            return dnsresponse(self.srv_lookup(qname))
         else:
             return dnsresponse(False)
 
@@ -151,6 +132,66 @@ class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
                         return [ss_instance]
                 continue
         return []  # Nothing found :(
+
+    def a_lookup(self, qname):
+        """Handle A record lookup."""
+        instances = self.resolve_hostname(qname)
+        for x in instances:
+            yield a_response(qname, x.service_endpoint.host, ttl=self.ttl)
+
+    def soa_lookup(self, qname):
+        """Handle SOA record lookup."""
+        if not qname.lower().strip('.').endswith(self.domain):
+            log.debug('nope')
+            return
+        yield soa_response(self.domain, self.soa_data.ttl, str(self.soa_data))
+
+    def srv_lookup(self, qname):
+        """Handle SRV record lookup.
+
+        Currently only works for serverset instances that have a shard number.
+        """
+        # Convert the hostname to the form it would be in for an A lookup
+        # e.g. _http._tcp.job.env.role.cluster.subdomain.example.com
+        # becomes         job.env.role.cluster.subdomain.example.com
+
+        _service, _proto, a_name = qname.lower().split('.', 2)
+        if not (_service.startswith('_') and _proto in ['_tcp', '_udp']):
+            return
+        service = _service[1:]
+        instances = self.resolve_hostname(a_name)
+        for instance in instances:
+            if not instance.shard:
+                continue
+            shard_a = '.'.join([instance.shard, a_name])
+            endpoint = instance.additional_endpoints.get(service)
+            if endpoint:
+                yield srv_response(qname, shard_a, endpoint.port, ttl=self.ttl)
+
+
+def srv_response(srv_name, target, port, ttl, priority=0, weight=0):
+    """Generate a pdns SRV query response."""
+    return {'qtype': 'SOA',
+            'qname': srv_name,
+            'ttl': ttl,
+            'content': ' '.join(
+                [srv_name, ttl, 'IN SRV', priority, weight, port, target])}
+
+
+def soa_response(domain, ttl, content):
+    """Generate a pdns SOA query response."""
+    return {'qtype': 'SOA',
+            'qname': str(domain),
+            'ttl': int(ttl),
+            'content': str(content)}
+
+
+def a_response(qname, ip_addr, ttl):
+    """Generate a pdns A query response."""
+    return {'qtype': 'A',
+            'qname': qname,
+            'ttl': ttl,
+            'content': ip_addr}
 
 
 def construct_paths(hostname, basedomain=None):
@@ -206,7 +247,7 @@ def main(_):
     zkconn.start()
 
     soa_data = SOAData(ttl=FLAGS.soa_ttl,
-                       ns=FLAGS.soa_nameserver or 'ns1.%s' % FLAGS.domain,
+                       ns1=FLAGS.soa_nameserver or 'ns1.%s' % FLAGS.domain,
                        email=FLAGS.soa_email or 'root.%s' % FLAGS.domain,
                        refresh=FLAGS.soa_refresh,
                        retry=FLAGS.soa_retry,
