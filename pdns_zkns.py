@@ -6,6 +6,8 @@ Not yet implemented:
     - Instrumentation (Prometheus metrics)
     - Some kind of status page
     - Correct handling of ANY queries(?)
+    - Testing
+    - Documentation
 """
 
 import time
@@ -52,9 +54,9 @@ flags.DEFINE_integer('soa_nxdomain_ttl', 60,
 class SOAData(object):
     """DNS SOA data representation."""
 
-    def __init__(self, ttl, ns, email, refresh, retry, expire, nxdomain_ttl):
+    def __init__(self, ttl, ns1, email, refresh, retry, expire, nxdomain_ttl):
         self.ttl = int(ttl)
-        self.ns = str(ns)
+        self.ns1 = str(ns1)
         self.email = str(email)
         self.refresh = int(refresh)
         self.retry = int(retry)
@@ -154,7 +156,7 @@ class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
         # becomes         job.env.role.cluster.subdomain.example.com
 
         _service, _proto, a_name = qname.lower().split('.', 2)
-        if not _service.startswith('_') and _proto in ['_tcp', '_udp']:
+        if not (_service.startswith('_') and _proto in ['_tcp', '_udp']):
             return
         service = _service[1:]
         instances = self.resolve_hostname(a_name)
@@ -167,15 +169,13 @@ class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
                 yield srv_response(qname, shard_a, endpoint.port, ttl=self.ttl)
 
 
-def srv_response(srv_name, a_name, port, ttl, priority=0, weight=0):
+def srv_response(srv_name, target, port, ttl, priority=0, weight=0):
     """Generate a pdns SRV query response."""
-    data = ('%(srv_name)s %(ttl)s IN SRV %(priority)s '
-            '%(weight)s %(port)s %(a_name)s') % locals()
     return {'qtype': 'SOA',
             'qname': srv_name,
             'ttl': ttl,
-            # _foo._tcp.bar.blah <ttl> IN SRV priority weight port target
-            'content': data}
+            'content': ' '.join(
+                [srv_name, ttl, 'IN SRV', priority, weight, port, target])}
 
 
 def soa_response(domain, ttl, content):
@@ -247,7 +247,7 @@ def main(_):
     zkconn.start()
 
     soa_data = SOAData(ttl=FLAGS.soa_ttl,
-                       ns=FLAGS.soa_nameserver or 'ns1.%s' % FLAGS.domain,
+                       ns1=FLAGS.soa_nameserver or 'ns1.%s' % FLAGS.domain,
                        email=FLAGS.soa_email or 'root.%s' % FLAGS.domain,
                        refresh=FLAGS.soa_refresh,
                        retry=FLAGS.soa_retry,
