@@ -21,8 +21,9 @@ from twitter.common.http.diagnostics import DiagnosticsEndpoints
 from twitter.common.zookeeper import kazoo_client
 from twitter.common.zookeeper.serverset import serverset
 
-FLAGS = flags.FLAGS
+import metrics
 
+FLAGS = flags.FLAGS
 
 flags.DEFINE_string('zk', 'localhost:2181/',
                     'Zookeeper ensemble (comma-delimited, optionally '
@@ -80,8 +81,12 @@ def dnsresponse(data):
     return resp
 
 
-class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
+class ZknsServer(http.HttpServer,
+                 DiagnosticsEndpoints,
+                 metrics.MetricsEndpoints):
     """Zookeeper-backed powerdns remote api backend"""
+
+    plugins = [metrics.MetricsPlugin()]
 
     def __init__(self, zk_handle, domain, ttl, soa_data):
         self.zkclient = zk_handle
@@ -89,8 +94,9 @@ class ZknsServer(http.HttpServer, DiagnosticsEndpoints):
         self.soa_data = soa_data
         self.ttl = ttl
 
-        DiagnosticsEndpoints.__init__(self)
         http.HttpServer.__init__(self)
+        DiagnosticsEndpoints.__init__(self)
+        metrics.MetricsEndpoints.__init__(self)
 
     @http.route('/dnsapi/lookup/<qname>/<qtype>', method='GET')
     def dnsapi_lookup(self, qname, qtype):
