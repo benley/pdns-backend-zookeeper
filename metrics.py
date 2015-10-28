@@ -3,13 +3,10 @@
 
 import functools
 
-import prometheus_client
+import prometheus_client as prom
 from twitter.common import http
 
 INF = float('inf')
-
-Counter = prometheus_client.Counter
-Histogram = prometheus_client.Histogram
 
 
 def powers_of(logbase, count, lower=0, include_zero=True):
@@ -21,33 +18,34 @@ def powers_of(logbase, count, lower=0, include_zero=True):
 
 
 class Metrics(object):
-    RequestCounter = Counter(
+    RequestCounter = prom.Counter(
         'http_requests_total', 'Total number of HTTP requests.',
         ['method', 'scheme'])
-    ResponseCounter = Counter(
+    ResponseCounter = prom.Counter(
         'http_responses_total', 'Total number of HTTP responses.',
         ['status'])
-    LatencyHistogram = Histogram(
+    LatencyHistogram = prom.Histogram(
         'http_latency_seconds', 'Overall HTTP transaction latency.')
-    RequestSizeHistogram = Histogram(
+    RequestSizeHistogram = prom.Histogram(
         'http_requests_body_bytes',
         'Breakdown of HTTP requests by content length.',
         buckets=powers_of(2, 30))
-    ResponseSizeHistogram = Histogram(
+    ResponseSizeHistogram = prom.Histogram(
         'http_responses_body_bytes',
         'Breakdown of HTTP responses by content length.',
         buckets=powers_of(2, 30))
 
 
 class MetricsPlugin(http.Plugin):
+    """Generic http server metrics for BottlePy and twitter.common.http"""
 
     name = 'PrometheusMetrics'
 
     def apply(self, callback, route):
+
         @Metrics.LatencyHistogram.time()
         @functools.wraps(callback)
         def wrapped_callback(*args, **kwargs):
-
             Metrics.RequestCounter.labels(
                 http.request.method,
                 http.request.get('wsgi.url_scheme')).inc()
@@ -56,7 +54,6 @@ class MetricsPlugin(http.Plugin):
                     http.request.content_length)
 
             body = callback(*args, **kwargs)
-
             status_code = http.response.status_code
             Metrics.ResponseCounter.labels(status_code).inc()
 
@@ -65,14 +62,15 @@ class MetricsPlugin(http.Plugin):
                 Metrics.ResponseSizeHistogram.observe(content_length)
             except (ValueError, TypeError):
                 pass
-
             return body
+
         return wrapped_callback
 
 
 class MetricsEndpoints(object):
+    """/metrics mixin for your twitter.common.http apps."""
 
     @http.route('/metrics', method='ANY')
     def metrics(self):
-        http.response.content_type = prometheus_client.CONTENT_TYPE_LATEST
-        return prometheus_client.generate_latest()
+        http.response.content_type = prom.CONTENT_TYPE_LATEST
+        return prom.generate_latest()
