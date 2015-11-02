@@ -118,9 +118,9 @@ class ZknsServer(http.HttpServer,
     @http.route('/dnsapi/lookup/<qname>/<qtype>', method='GET')
     def dnsapi_lookup(self, qname, qtype):
         """pdns lookup api"""
+        log.debug('QUERY: %s %s', qname, qtype)
         self.QueryCounter.labels('lookup').inc()
         self.LookupCounter.labels('qtype').inc()
-        log.info('QUERY: %s %s', qname, qtype)
         # TODO: better ANY handling (what's even correct here?)
         with self.LookupTimer.labels(qtype).time():
             if qtype == 'ANY':
@@ -181,7 +181,6 @@ class ZknsServer(http.HttpServer,
     def soa_lookup(self, qname):
         """Handle SOA record lookup."""
         if not qname.lower().strip('.').endswith(self.domain):
-            log.debug('nope')
             return
         yield soa_response(self.domain, self.soa_data.ttl, str(self.soa_data))
 
