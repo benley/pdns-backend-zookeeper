@@ -29,11 +29,11 @@ class Metrics(object):
     RequestSizeHistogram = prom.Histogram(
         'http_requests_body_bytes',
         'Breakdown of HTTP requests by content length.',
-        buckets=powers_of(2, 30))
+        buckets=powers_of(5, 11))
     ResponseSizeHistogram = prom.Histogram(
         'http_responses_body_bytes',
         'Breakdown of HTTP responses by content length.',
-        buckets=powers_of(2, 30))
+        buckets=powers_of(5, 11))
 
 
 class MetricsPlugin(http.Plugin):
