@@ -8,12 +8,17 @@ Not yet implemented:
     - Correct handling of ANY queries(?)
     - Testing
     - Documentation
+
+Upstream developer docs:
+   https://doc.powerdns.com/md/authoritative/backend-remote/
+   https://doc.powerdns.com/md/appendix/backend-writers-guide/
 """
 
 import itertools
 import socket
 import time
 
+import prometheus_client as prom
 from pyglib import app
 from pyglib import flags
 from pyglib import log
@@ -90,6 +95,16 @@ class ZknsServer(http.HttpServer,
 
     plugins = [metrics.MetricsPlugin()]
 
+    QueryCounter = prom.Counter(
+        'dnsapi_requests_total', 'Total number of dnsapi requests.',
+        ['method'])
+    LookupCounter = prom.Counter(
+        'dnsapi_lookups_total', 'Total number of record lookups.',
+        ['qtype'])
+    LookupTimer = prom.Histogram(
+        'dnsapi_lookups_time', 'Breakdown of latency by lookup type.',
+        ['qtype'])
+
     def __init__(self, zk_handle, domain, ttl, soa_data):
         self.zkclient = zk_handle
         self.domain = domain.strip('.')
@@ -103,29 +118,32 @@ class ZknsServer(http.HttpServer,
     @http.route('/dnsapi/lookup/<qname>/<qtype>', method='GET')
     def dnsapi_lookup(self, qname, qtype):
         """pdns lookup api"""
-        log.debug('QUERY: %s %s', qname, qtype)
+        self.QueryCounter.labels('lookup').inc()
+        self.LookupCounter.labels('qtype').inc()
+        log.info('QUERY: %s %s', qname, qtype)
         # TODO: better ANY handling (what's even correct here?)
-        if qtype == 'ANY':
-            return dnsresponse(itertools.chain(
-                self.a_lookup(qname),
-                self.ns_lookup(qname),
-                self.soa_lookup(qname),
-                self.srv_lookup(qname)))
-        elif qtype == 'A':
-            return dnsresponse(self.a_lookup(qname))
-        elif qtype == 'NS':
-            return dnsresponse(self.ns_lookup(qname))
-        elif qtype == 'SOA':
-            return dnsresponse(self.soa_lookup(qname))
-        elif qtype == 'SRV':
-            return dnsresponse(self.srv_lookup(qname))
-        else:
-            return dnsresponse(False)
+        with self.LookupTimer.labels(qtype).time():
+            if qtype == 'ANY':
+                return dnsresponse(itertools.chain(
+                    self.a_lookup(qname),
+                    self.ns_lookup(qname),
+                    self.soa_lookup(qname),
+                    self.srv_lookup(qname)))
+            elif qtype == 'A':
+                return dnsresponse(self.a_lookup(qname))
+            elif qtype == 'NS':
+                return dnsresponse(self.ns_lookup(qname))
+            elif qtype == 'SOA':
+                return dnsresponse(self.soa_lookup(qname))
+            elif qtype == 'SRV':
+                return dnsresponse(self.srv_lookup(qname))
+            else:
+                return dnsresponse(False)
 
-    @staticmethod
     @http.route('/dnsapi/getDomainMetadata/<qname>/<qkind>', method='GET')
-    def dnsapi_getdomainmetadata(qname, qkind):
+    def dnsapi_getdomainmetadata(self, qname, qkind):
         """pdns getDomainMetadata api"""
+        self.QueryCounter.labels('getDomainMetadata').inc()
         log.debug('QUERY: %s %s', qname, qkind)
         if qkind == 'SOA-EDIT':
             # http://jpmens.net/2013/01/18/understanding-powerdns-soa-edit/
