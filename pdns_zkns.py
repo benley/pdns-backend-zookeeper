@@ -3,7 +3,6 @@
 
 Not yet implemented:
     - NS records
-    - Instrumentation (Prometheus metrics)
     - Some kind of status page
     - Correct handling of ANY queries(?)
     - Testing
